@@ -1,0 +1,251 @@
+service: mentor-mentee-serverless
+
+provider:
+  name: aws
+  runtime: python3.8
+
+#  iamRoleStatements:
+#    - Effect: Allow
+#      Action:
+#        - dynamodb:PutItem
+#        - dynamodb:GetItem
+#      Resource:
+#        - Fn::GetAtt:
+#            - taskTable
+#            - Arn
+#    - Effect: Allow
+#      Action:
+#        - sqs:SendMessage
+#      Resource:
+#        - Fn::GetAtt:
+#            - taskStatusChangedQueue
+#            - Arn
+#    - Effect: Allow
+#      Action:
+#        - ses:SendEmail
+#      Resource:
+#        - "*"
+#      Condition:
+#        StringEquals:
+#          ses:FromAddress:
+#            - iryna_tserlizhenka@epam.com
+
+functions:
+  assign_task:
+    handler: assign_task_handler.assign_task
+    events:
+      - http:
+          path: /tasks/assign
+          method: post
+    memorySize: 256
+    timeout: 15
+    role: assignTaskRole
+  finish_task:
+    handler: finish_task_handler.finish_task
+    events:
+      - http:
+          path: tasks/{task_id}/finish
+          method: put
+          request:
+            parameters:
+              paths:
+                task_id: true
+    memorySize: 256
+    timeout: 15
+    role: updateTaskRole
+  reject_task:
+    handler: reject_task_handler.reject_task
+    events:
+      - http:
+          path: tasks/{task_id}/reject
+          method: put
+          request:
+            parameters:
+              paths:
+                task_id: true
+    memorySize: 256
+    timeout: 15
+    role: updateTaskRole
+  close_task:
+    handler: close_task_handler.close_task
+    events:
+      - http:
+          path: tasks/{task_id}/close
+          method: delete
+          request:
+            parameters:
+              paths:
+                task_id: true
+    memorySize: 256
+    timeout: 15
+    role: updateTaskRole
+  notify_status_changed:
+    handler: notify_handler.notify
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - taskStatusChangedQueue
+              - Arn
+    memorySize: 256
+    timeout: 15
+    environment:
+      EMAIL_FROM: iryna_tserlizhenka@epam.com
+    role: notifyStatusChangedRole
+
+resources:
+  Resources:
+    taskTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: tasks-table
+        AttributeDefinitions:
+          - AttributeName: "task_id"
+            AttributeType: "S"
+        KeySchema:
+          - AttributeName: "task_id"
+            KeyType: "HASH"
+        BillingMode: PROVISIONED
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+#        StreamSpecification:
+#          StreamViewType: NEW_IMAGE
+    taskStatusChangedDlq:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: task-status-changed-dlq
+        MessageRetentionPeriod: 1209600
+    taskStatusChangedQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: task-status-changed
+        RedrivePolicy:
+          maxReceiveCount: 3
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - taskStatusChangedDlq
+              - Arn
+    # roles
+    assignTaskRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: MentoringAssignTaskRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: MentoringAssignTaskPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - Fn::Join:
+                        - ":"
+                        - - "arn:aws:logs"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "log-group:/aws/lambda/*:*"
+                - Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - taskTable
+                        - Arn
+                - Effect: Allow
+                  Action:
+                    - sqs:SendMessage
+                  Resource:
+                    - Fn::GetAtt:
+                        - taskStatusChangedQueue
+                        - Arn
+    updateTaskRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: MentoringUpdateTaskRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: MentoringUpdateTaskPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - Fn::Join:
+                        - ":"
+                        - - "arn:aws:logs"
+                          - Ref: "AWS::Region"
+                          - Ref: "AWS::AccountId"
+                          - "log-group:/aws/lambda/*:*"
+                - Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                    - dynamodb:GetItem
+                  Resource:
+                    - Fn::GetAtt:
+                        - taskTable
+                        - Arn
+                - Effect: Allow
+                  Action:
+                    - sqs:SendMessage
+                  Resource:
+                    - Fn::GetAtt:
+                        - taskStatusChangedQueue
+                        - Arn
+    notifyStatusChangedRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: MentoringNotifyStatusChangedRole
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: MentoringNotifyStatusChangedPolicy
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: "Allow"
+                  Action:
+                    - "ses:SendEmail"
+                  Resource:
+                    - "*"
+                  Condition:
+                    StringEquals:
+                      ses:FromAddress:
+                        - "iryna_tserlizhenka@epam.com"
+                - Effect: "Allow"
+                  Action:
+                    - "sqs:ReceiveMessage"
+                    - "sqs:DeleteMessage"
+                    - "sqs:GetQueueAttributes"
+                  Resource:
+                    - Fn::GetAtt:
+                        - taskStatusChangedQueue
+                        - Arn
