@@ -16,4 +16,4 @@ course.
 
 # Architecture
 
-<a href="./readme/architecture.png"></a>
+![Architecture diagram](./readme/architecture.png)
